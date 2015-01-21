@@ -211,4 +211,21 @@ extern void writePERFEVTSEL(int, int, UINT64);
 extern UINT64 readPMC(int, int);
 extern void writePMC(int, int, UINT64);
 
+class Node {
+	public:
+	INT64 key;
+	Node *left;
+	Node *right;
+	Node();
+};
+
+class BST {
+	public:
+	Node *root; // initially NULL
+	BST(); // constructor
+	int contains(INT64); // return 1 if key in tree
+	int add(Node*); // add node to tree
+	Node* remove(INT64); // remove key from tree
+};
+
 // eof

@@ -1000,4 +1000,115 @@ size_t getMemUse()
     return r;
 }
 
+Node::Node(){
+	key = 0; 
+	right = left = NULL;
+}
+
+BST::BST()
+{
+	root = NULL;
+}
+
+
+int BST::contains(INT64 key)
+{
+	Node **pp = &root;
+	Node *p = root;
+	while (p) 
+	{
+		if (key < p->key) 
+		{
+			pp = &p->left;
+		} 
+		else if (key > p->key) 
+		{
+			pp = &p->right;
+		} 
+		else 
+		{
+			break;
+		}
+		p = *pp;
+	}
+	if (p == NULL)
+		return 0;
+	else
+		return 1;
+}
+
+
+int BST::add (Node *n)
+{
+	Node* volatile *pp = &root;
+	Node *p = root;
+	while (p) {
+		if (n->key < p->key) 
+		{
+			pp = &p->left;
+		} 
+		else if (n->key > p->key) 
+		{
+				pp = &p->right;
+		} 
+		else 
+		{
+			return 0;
+		}
+		p = *pp;
+	}
+	*pp = n;
+	return 1;
+}
+
+Node* BST::remove(INT64 key)
+{
+	Node **pp = &root;
+	Node *p = root;
+	while (p) 
+	{
+		if (key < p->key) 
+		{
+			pp = &p->left;
+		} 
+		else if (key > p->key) 
+		{
+			pp = &p->right;
+		} 
+		else 
+		{
+			break;
+		}
+		p = *pp;
+	}
+	if (p == NULL)
+		return NULL;
+	if (p->left == NULL && p->right == NULL) 
+	{
+		*pp = NULL; // NO children
+	} 
+	else if (p->left == NULL) 
+	{
+		*pp = p->right; // ONE child
+	}
+	else if (p->right == NULL) 
+	{
+		*pp = p->left; // ONE child
+	}
+	else 
+	{
+		Node *r = p->right; // TWO children
+		Node **ppr = &p->right; // find min key in right sub tree
+		while (r->left) 
+		{
+			ppr = &r->left;
+			r = r->left;
+		}
+		p->key = r->key; // could move...
+		p = r; // node instead
+		*ppr = r->right;
+	}
+	return p; // return removed node
+}
+
 // eof

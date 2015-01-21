@@ -22,6 +22,8 @@ UINT64 *ops;                                    // for ops per thread
 #define ALIGNED_MALLOC(sz, align) _aligned_malloc(sz, align)
 #define GINDX(n)    (g+n*lineSz/sizeof(VINT))   //
 
+volatile UINT64 share_inc;
+
 typedef struct {
     int sharing;                                // sharing
     int nt;                                     // # threads
@@ -36,9 +38,6 @@ UINT indx;                                      // results index
 
 volatile VINT *g;   // NB: position of volatile
 
-//
-// test memory allocation [see lecture notes]
-//
 ALIGN(64) UINT64 cnt0;
 ALIGN(64) UINT64 cnt1;
 ALIGN(64) UINT64 cnt2;
@@ -67,7 +66,7 @@ void ALIGNEDMA::operator delete(void *p)
 _aligned_free(p); // free object
 }
 
-#define LOCKTYPE	4
+#define LOCKTYPE	1
 
 void noLock(volatile VINT *g);
 void bakeryLock(volatile VINT *g, int pid);
@@ -77,39 +76,81 @@ void mcsLock(volatile VINT *g);
 
 #if LOCKTYPE == 0
 #define LOCKSTR       "No Lock"
+//#define LOCKINC()	(*gs)++
+#define LOCKINC()	(share_inc)++
 
-#elif LOCKTYPE == 1
-#define LOCKSTR	"Bakery"
+#elif LOCKTYPE == 1				
+#define LOCKSTR	"Bakery"					
+#define LOCKINC()							\
+	int mt = worker_nt;						\
+	choosing[thread] = true;				\
+		/*memory fence ensures value of choosing is written through*/\
+	_mm_mfence();							\
+	int mx = 0;								\
+	for(int i = 0; i<mt; i++){				\
+		int num = number[i];				\
+		if(num>mx){							\
+	mx = num;}								\
+	}										\
+	number[thread] = mx+1;					\
+	choosing[thread] = false;				\
+		/*fence ensure choosing value is written through */\
+	_mm_mfence();							\
+	for(int j=0; j<mt; j++){				\
+		while(choosing[j] == true);			\
+		while ((number[j] != 0) && ((number[j] < number[thread]) || ((number[j] == number[thread]) && (j < thread))));\
+	}	/*aquired lock*/									\
+	(*gs)++;									\
+		/*release lock*/										\
+	number[thread] = 0;
 
 #elif LOCKTYPE == 2
 #define LOCKSTR	"TESTnSET"
+#define LOCKINC()							\
+	while(InterlockedExchange(&lock, 1));	\
+	(*gs)++;								\
+	lock = 0;
 
 #elif LOCKTYPE == 3
 #define LOCKSTR	"TESTnTESTnSET"
+#define	LOCKINC()							\
+	do{										\
+	while(lock==1)							\
+			_mm_pause();					\
+	}while(InterlockedExchange(&lock, 1));	\
+	(*gs)++;								\
+	lock = 0;
 
 #elif LOCKTYPE == 4
 #define LOCKSTR	"MCS"
-#define LOCKINC()		qn->next = NULL;									\
-						volatile QNode *pred ;								\
-						pred = (QNode*) InterlockedExchangePointer((PVOID*) MCSlock, (PVOID) qn);\
-						if(pred != NULL)									\
-						{													\
-							qn->waiting = 1;								\
-							pred->next = qn;								\
-							while (qn->waiting);							\
-						}													\
-						(*gs)++;											\
-																			\
-						volatile QNode *succ = qn->next;					\
-						if (!succ) {										\
-							if (!(InterlockedCompareExchangePointer((PVOID*)MCSlock, NULL, (PVOID) qn) == qn))\
-							{												\
-								do{											\
-								succ = qn->next;							\
-								}while(!succ);								\
-								succ->waiting = 0;							\
-							}												\
-						}
+#define LOCKINC()							\
+	volatile QNode *qn = new volatile QNode;\
+	qn->next = NULL;						\
+	volatile QNode *pred = (QNode*) InterlockedExchangePointer((PVOID*) MCSlock, (PVOID) qn);\
+	if(pred != NULL)						\
+	{										\
+		qn->waiting = 1;					\
+		pred->next = qn;					\
+		while (qn->waiting);				\
+	}										\
+	/*lock aquired*/ 						\
+	(*gs)++;									\
+	/*lock release*/						\
+	volatile QNode *succ = qn->next;		\
+	if (!succ) {							\
+		if (!(InterlockedCompareExchangePointer((PVOID*)MCSlock, NULL, (PVOID) qn) == qn))\
+		{									\
+			do{								\
+			succ = qn->next;				\
+			}while(!succ);					\
+			succ->waiting = 0;				\
+		}									\
+	}										\
+	else									\
+	{										\
+		succ->waiting = 0;					\
+	}										\
+	delete qn;
 #endif
 
 int volatile *number;
@@ -124,7 +165,6 @@ WORKER worker(void *vthread)
 
     UINT64 n = 0;
 
-    volatile VINT *gt = GINDX(thread);
     volatile VINT *gs = GINDX(maxThread);
 
     runThreadOnCPU(thread % ncpu);
@@ -133,16 +173,20 @@ WORKER worker(void *vthread)
 
 		for (int i = 0; i < NOPS; i++) {
 #if LOCKTYPE == 0
-	noLock(gs);
+	//noLock(gs);
+	LOCKINC();
 #elif LOCKTYPE  == 1 
-	bakeryLock(gs, thread);
+	//bakeryLock(gs, thread);
+	LOCKINC();
 #elif LOCKTYPE == 2
-	testAndSetLock(gs);
+	//testAndSetLock(gs);
+	LOCKINC();
 #elif LOCKTYPE == 3
-	testAndTestAndSetLock(gs);
+	//testAndTestAndSetLock(gs);
+	LOCKINC();
 #elif LOCKTYPE == 4
-	mcsLock(gs);
-	//LOCKINC();
+	//mcsLock();
+	LOCKINC();
 
 #endif
 		}
@@ -179,8 +223,6 @@ int main()
 
 	MCSlock = new volatile QNode*;
 	*MCSlock = NULL;
-	//*MCSlock = new volatile QNode; 
-
     //
     // console output
     //
@@ -262,7 +304,7 @@ int main()
 
 	for (int nt = 1; nt <= maxThread; nt *= 2, indx++) 
 	{
-
+		share_inc = 0;
 
 #if LOCKTYPE == 1
 number = (volatile int*) ALIGNED_MALLOC(nt*sizeof(int), lineSz);
@@ -300,6 +342,7 @@ worker_nt = nt;
                 r[indx].incs += *(GINDX(thread));
 				 }
             r[indx].incs += *(GINDX(maxThread));
+			r[indx].incs += share_inc;
             if ((sharing == 0) && (nt == 1))
                 ops1 = r[indx].ops;
             r[indx].sharing = sharing;
